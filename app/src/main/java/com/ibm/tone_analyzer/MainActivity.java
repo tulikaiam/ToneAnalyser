@@ -1,0 +1,218 @@
+package com.ibm.tone_analyzer;
+
+import android.app.DialogFragment;
+import android.content.Context;
+import android.content.Intent;
+import android.os.AsyncTask;
+import android.os.Bundle;
+import android.speech.RecognizerIntent;
+import android.support.design.widget.FloatingActionButton;
+import android.support.design.widget.Snackbar;
+import android.support.v7.app.AppCompatActivity;
+import android.support.v7.widget.Toolbar;
+import android.view.Menu;
+import android.view.View;
+import android.view.inputmethod.InputMethodManager;
+import android.widget.Button;
+import android.widget.EditText;
+import android.widget.LinearLayout;
+import android.widget.ProgressBar;
+import android.widget.Toast;
+
+import com.ibm.watson.developer_cloud.service.exception.UnauthorizedException;
+import com.ibm.watson.developer_cloud.tone_analyzer.v3.ToneAnalyzer;
+import com.ibm.watson.developer_cloud.tone_analyzer.v3.model.ToneAnalysis;
+import java.net.UnknownHostException;
+import java.util.ArrayList;
+
+
+public class MainActivity extends AppCompatActivity {
+
+
+
+
+    private ToneAnalyzer toneAnalyzerService;
+    private AnalyzerResultFragment resultFragment;
+    Button speakbtn;
+
+
+    @Override
+    protected void onCreate(Bundle savedInstanceState) {
+        super.onCreate(savedInstanceState);
+        setContentView(R.layout.activity_main);
+        speakbtn = (Button) findViewById(R.id.button);
+
+        Toolbar toolbar = (Toolbar) findViewById(R.id.toolbar);
+        setSupportActionBar(toolbar);
+
+
+        speakbtn.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                Intent intent = new Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH);
+                intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, "en_US");
+                try {
+                    startActivityForResult(intent, 1);
+                } catch (Exception e) {
+                    e.printStackTrace();
+                    Toast.makeText(MainActivity.this, "Sorry Your Device does not support Speech to Text feautre", Toast.LENGTH_SHORT).show();
+                }
+            }
+        });
+
+
+        toneAnalyzerService = new ToneAnalyzer(ToneAnalyzer.VERSION_DATE_2016_05_19,
+                getString(R.string.watson_tone_analyzer_username),
+                getString(R.string.watson_tone_analyzer_password));
+
+        FloatingActionButton fab = (FloatingActionButton)findViewById(R.id.fab);
+        fab.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                EditText entryTextView = (EditText)findViewById(R.id.entryText);
+                String entryText = entryTextView.getText().toString();
+
+                if (!entryText.isEmpty()) {
+                    // Send the user's input text to the AnalyzeTask.
+                    AnalyzeTask analyzeTask = new AnalyzeTask();
+                    analyzeTask.execute(entryText);
+                } else {
+                    Snackbar.make(v, "There's no text to analyze", Snackbar.LENGTH_SHORT).show();
+                }
+            }
+        });
+
+        // Using a retained fragment to hold our result from Analyzer, if it doesn't exist create it.
+        resultFragment = (AnalyzerResultFragment)getSupportFragmentManager().findFragmentByTag("result");
+
+        if (resultFragment == null) {
+            resultFragment = new AnalyzerResultFragment();
+            resultFragment.setRetainInstance(true);
+            getSupportFragmentManager().beginTransaction().add(R.id.fragment_container, resultFragment, "result").commit();
+
+            /*
+             * On first run through send a single space to ToneAnalyzer. This gives us the full return
+             * data structure which we use to dynamically create the UI. This call also allows us to
+             * check their credentials at start-up.
+             */
+            AnalyzeTask analyzeTask = new AnalyzeTask();
+            analyzeTask.execute(" ");
+        }
+    }
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        EditText entryTextView=(EditText)findViewById(R.id.entryText);
+        if (requestCode == 1) {
+            if (resultCode == RESULT_OK && data != null) {
+                ArrayList<String> al = data.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS);
+                entryTextView.append("\n");
+                String a=al.get(0);
+                entryTextView.append(al.get(0));
+            }
+        }
+        super.onActivityResult(requestCode, resultCode, data);
+    }
+
+    @Override
+    public void onResume() {
+        super.onResume();
+
+
+
+    }
+
+    @Override
+    public void onPause() {
+        super.onPause();
+
+    }
+
+    @Override
+    public boolean onCreateOptionsMenu(Menu menu) {
+        // Inflate the menu; this adds items to the action bar if it is present.
+        getMenuInflater().inflate(R.menu.menu_main, menu);
+        return true;
+    }
+
+    @Override
+    public void onDestroy() {
+        // Have the fragment save its state for recreation on orientation changes.
+        resultFragment.saveData();
+        super.onDestroy();
+    }
+
+    /**
+     * Displays an AlertDialogFragment with the given parameters.
+     * @param errorTitle Error Title from values/strings.xml.
+     * @param errorMessage Error Message either from values/strings.xml or response from server.
+     * @param canContinue Whether the application can continue without needing to be rebuilt.
+     */
+    private void showDialog(int errorTitle, String errorMessage, boolean canContinue) {
+        DialogFragment newFragment = AlertDialogFragment.newInstance(errorTitle, errorMessage, canContinue);
+        newFragment.show(getFragmentManager(), "dialog");
+    }
+
+    /**
+     * Enables communication to the Tone Analyzer Service and fetches the service's output.
+     */
+    private class AnalyzeTask extends AsyncTask<String, Void, ToneAnalysis> {
+
+        @Override
+        protected void onPreExecute() {
+            EditText entryTextView = (EditText)findViewById(R.id.entryText);
+            entryTextView.clearFocus();
+
+            // Hide the keyboard so the user can see the full result.
+            InputMethodManager imm = (InputMethodManager)getSystemService(Context.INPUT_METHOD_SERVICE);
+            imm.hideSoftInputFromWindow(entryTextView.getWindowToken(), 0);
+
+            // Turn on the loading spinner for the brief network load.
+            ProgressBar progressBar = (ProgressBar)findViewById(R.id.progressBar);
+            progressBar.setVisibility(View.VISIBLE);
+        }
+
+        @Override
+        protected ToneAnalysis doInBackground(String... params) {
+            String entryText = params[0];
+            ToneAnalysis analysisResult;
+
+            try {
+                analysisResult = toneAnalyzerService.getTone(entryText, null).execute();
+            } catch (Exception ex) {
+                // Here is where we see if the user's credentials are valid or not along with other errors.
+                if (ex.getClass().equals(UnauthorizedException.class) ||
+                        ex.getClass().equals(IllegalArgumentException.class)) {
+                    showDialog(R.string.error_title_invalid_credentials,
+                            getString(R.string.error_message_invalid_credentials), false);
+                } else if (ex.getCause() != null &&
+                        ex.getCause().getClass().equals(UnknownHostException.class)) {
+                    showDialog(R.string.error_title_bluemix_connection,
+                            getString(R.string.error_message_bluemix_connection), true);
+                } else {
+                    showDialog(R.string.error_title_default, ex.getMessage(), true);
+                }
+                return null;
+            }
+
+            return analysisResult;
+        }
+
+        @Override
+        protected void onPostExecute(ToneAnalysis result) {
+            // Turn off the loading spinner.
+            ProgressBar progressBar = (ProgressBar)findViewById(R.id.progressBar);
+            progressBar.setVisibility(View.GONE);
+
+            // If null do nothing, an alertDialog will be popping up from the catch statement earlier.
+            if (result != null) {
+                // If not null send the full result from ToneAnalyzer to our UI Builder class.
+                AnalyzerResultBuilder resultBuilder = new AnalyzerResultBuilder(MainActivity.this, result);
+                LinearLayout resultLayout = (LinearLayout) findViewById(R.id.analysisResultLayout);
+
+                resultLayout.removeAllViews();
+                resultLayout.addView(resultBuilder.buildAnalyzerResultView());
+            }
+        }
+
+    }
+}
